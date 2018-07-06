@@ -3,88 +3,95 @@
 # install nodejs via nvm
 
 setupNode() {
-  printf '******************************************** Installing NVM *********************************************** \n'
-  curl -o- https://raw.githubusercontent.com/creationix/nvm/v0.33.0/install.sh | bash
-  export NVM_DIR="$HOME/.nvm"
-  [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-  source ~/.profile
-
-  printf '******************************************** Installing NODE VERSION 9.11.1 *********************************************** \n'
-  nvm install v9.11.1
-  export NODE_ENV=production
-  printf '******************************************** NODE SETUP SUCCESSFUL *********************************************** \n'
+  printf '\n ************************************** Installing NODEJS **************************************** \n'
+  sudo apt-get update
+  curl -sL https://deb.nodesource.com/setup_9.x -o nodesource_setup.sh
+  sudo bash nodesource_setup.sh
+  sudo apt-get install nodejs -y
 }
 
+declareEnv() {
+#   sudo bash -c 'cat > .env <<EOF
+#   export NODE_ENV=production
+#   export DATABASE_URL=<POSTGRESQL DATABASE URL>
+#   export SECRET_KEY=<JWT SECRET>
+#   export EMAIL_ADDRESS=<MAILING SERVICE EMAIL ADDRESS>
+#   export EMAIL_PASSWORD=<MAILING SERVICE PASSWORD>
+# EOF'
+  source ../env
+}
 
 # clone application repository
 cloneRepo() {
-  printf '*************************************** CLONE GIT REPOSITORY FROM GITHUB *********************************************** \n'
+  printf '\n ************************************** Cloning Repository From Github **************************** \n'
   if [ -d EventsManagerApp ]; then
     rm -rf EventsManagerApp
-    git clone https://github.com/Davitron/EventsManagerApp.git 
+    git clone -b aws-deploy https://github.com/Davitron/EventsManagerApp.git
   else
-    git clone https://github.com/Davitron/EventsManagerApp.git
+    git clone -b aws-deploy https://github.com/Davitron/EventsManagerApp.git
   fi
 }
 
-#setup application
-# install dependencies and build the application
-
-defineEnvVariables() {
-  sudo bash -c 'cat > ./.env <<-EOF
-  DATABASE_URL=postgres://postgres:posgres:postgres@ec2-18-219-31-108.us-eact-2.compute.amazinaws.com:5432/event-manager?sss=true
-  SECTRET_KEY=topsecret
-  EMAIL_ADDRESS=matthews.segunapp@gmail.com
-  EMAIL_PASSWORD=holly213
-	EOF'
-}
-
-buildApplication() {
-  printf '******************************************** Installing All Dependencies ****************************************************** \n'
+buildDependencies() {
   cd EventsManagerApp
+  printf '\n ********************************* Installing All Dependencies ******************************************* \n'
+  sudo npm install -g sequelize-cli
   npm install
-  npm run full-build
-  defineEnvVariables
+  printf '\n *************************************** Building Application ******************************************** \n'
+  npm run build:server
+  npm run load-config
+  npm run load-swagger
 }
 
 configureNGINX() {
-	printf '******************************************** Configuring NGINX ****************************************************** \n'
-	sudo apt-get update
-	sudo apt-get install nginx -y
-	sudo rm -rf /etc/nginx/sites-enabled/default
-	if [[ -f /etc/nginx/sites-enabled/eventManager ]]; then
-		printf '****************************************** Found Existing Configuration ******************************************* \n'
-		sudo rm -rf /etc/nginx/sites-enabled/eventManager
-		sudo rm -rf /etc/nginx/sites-available/eventManager
-	fi
-	sudo bash -c 'cat > /etc/nginx/sites-available/eventManager <<-EOF
-	server {
-		listen 80;
-		server_name EventManager;
-		location / {
-			proxy_pass 'http://127.0.0.1:8000';
-		}
-	}
-	EOF'
-	sudo ln -s /etc/nginx/sites-available/eventManager /etc/nginx/sites-enabled/eventManager
-	sudo service nginx restart
+    printf '\n ************************************ Configuring NGINX ********************************************** \n'
+    sudo apt-get install nginx -y
+    sudo rm -rf /etc/nginx/sites-enabled/default
+    if [[ -f /etc/nginx/sites-enabled/eventManager ]]; then
+        printf '\n ******************************** Removing Existing Configurations ******************************* \n'
+        sudo rm -rf /etc/nginx/sites-enabled/eventManager
+        sudo rm -rf /etc/nginx/sites-available/eventManager
+    fi
+    sudo bash -c 'cat > /etc/nginx/sites-available/eventManager <<EOF
+    server {
+        listen 80;
+        server_name example.com www.example.com;
+        location / {
+            proxy_pass 'http://127.0.0.1:8000';
+        }
+    }'
+    sudo ln -s /etc/nginx/sites-available/eventManager /etc/nginx/sites-enabled/eventManager
+    sudo service nginx restart
+}
+
+configureSSL() {
+  printf '\n ****************************************** Configuring SSL ******************************************* \n'
+  sudo apt-get update
+  sudo apt-get install software-properties-common
+  sudo add-apt-repository ppa:certbot/certbot
+  sudo apt-get update
+  sudo apt-get install python-certbot-nginx -y
+  sudo certbot --nginx
 }
 
 configureProcessManager() {
-	printf '****************************************** Installing PM2 ******************************************* \n'
-	npm install -g pm2
-	printf '****************************************** Run Database Migration ******************************************* \n'
-	npm run db:migration
+  printf '\n ************************************** Running Database Migration *************************************** \n'
+  sequelize db:migrate:undo:all
+  sequelize db:migrate
+  sequelize db:seed:all
+	printf '\n ****************************************** Installing PM2 ******************************************* \n'
+	sudo npm install -g pm2
 	pm2 start npm -- start
-
 }
 
-deploy() {
+main() {
+  cloneRepo
 	setupNode
-	cloneRepo
-	buildApplication
-	configureNGINX
+  configureNGINX
+  configureSSL
+  buildDependencies
+  declareEnv
 	configureProcessManager
 }
 
-deploy
+main
